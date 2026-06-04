@@ -6916,39 +6916,72 @@ function fullGameReset() {
     showToast('🔄 游戏已重新开始', '#4CAF50');
 }
 
-        // ========== 解析XML ==========
+                // ========== 解析XML ==========
         function parseXML(xml) {
             var result = { scene: {}, contentBlocks: [], choices: [] };
 
             try {
+                // 1. 解析场景信息
                 var sm = xml.match(/<scene_info>([\s\S]*?)<\/scene_info>/i);
                 if (sm) {
                     var t = sm[1];
-                    var lm = t.match(/\[场景\|([^\]]+)\]/); if (lm) result.scene.location = lm[1];
-                    var tm = t.match(/\[时间\|([^\]]+)\]/); if (tm) result.scene.time = tm[1];
-                    var mm = t.match(/\[氛围\|([^\]]+)\]/); if (mm) result.scene.mood = mm[1];
+                    var lm = t.match(/\[场景\|([^\]]+)\]/); if (lm) result.scene.location = lm[1].trim();
+                    var tm = t.match(/\[时间\|([^\]]+)\]/); if (tm) result.scene.time = tm[1].trim();
+                    var mm = t.match(/\[氛围\|([^\]]+)\]/); if (mm) result.scene.mood = mm[1].trim();
                 }
 
                 var els = [];
+
+                // 2. 强化解析旁白：支持多段旁白和换行
                 var nr = /<narration>([\s\S]*?)<\/narration>/gi, m;
                 while ((m = nr.exec(xml)) !== null) {
-                    var n = m[1].match(/\[旁白\|([^\]]+)\]/);
-                    if (n) els.push({ idx: m.index, type: 'narration', content: n[1] });
+                    var content = m[1];
+                    var index = m.index;
+                    var regex = /\[旁白\|([\s\S]*?)\]/g;
+                    var found = false;
+                    var matchNarration;
+                    
+                    while ((matchNarration = regex.exec(content)) !== null) {
+                        els.push({ idx: index + matchNarration.index, type: 'narration', content: matchNarration[1].trim() });
+                        found = true;
+                    }
+                    
+                    // 容错：如果AI忘记加[旁白|]标签，直接提取纯文本
+                    if (!found && content.trim().length > 0) {
+                        var cleanText = content.replace(/<[^>]+>/g, '').trim();
+                        if(cleanText) els.push({ idx: index, type: 'narration', content: cleanText });
+                    }
                 }
 
+                // 3. 强化解析对话：支持多个对话连在一起
                 var dr = /<dialogue>([\s\S]*?)<\/dialogue>/gi;
                 while ((m = dr.exec(xml)) !== null) {
-                    var spk = m[1].match(/\[说话人\|([^\]]+)\]/);
-                    var ln = m[1].match(/\[台词\|([^\]]+)\]/);
-                    if (ln) els.push({ idx: m.index, type: 'dialogue', speaker: spk ? spk[1] : '???', content: ln[1] });
+                    var content = m[1];
+                    var index = m.index;
+                    var speakerRegex = /\[说话人\|([^\]]+)\][\s\S]*?\[台词\|([\s\S]*?)\]/g;
+                    var matchDialogue;
+                    
+                    while ((matchDialogue = speakerRegex.exec(content)) !== null) {
+                        els.push({
+                            idx: index + matchDialogue.index,
+                            type: 'dialogue',
+                            speaker: matchDialogue[1].trim(),
+                            content: matchDialogue[2].trim()
+                        });
+                    }
                 }
 
+                // 4. 解析选项
                 var ch = xml.match(/<choices>([\s\S]*?)<\/choices>/i);
                 if (ch) {
                     var cx = /\[选项\|([^\]]+)\]/g;
-                    while ((m = cx.exec(ch[1])) !== null) result.choices.push(m[1]);
+                    var matchChoice;
+                    while ((matchChoice = cx.exec(ch[1])) !== null) {
+                        result.choices.push(matchChoice[1].trim());
+                    }
                 }
 
+                // 排序并推入结果
                 els.sort(function(a, b) { return a.idx - b.idx; });
                 els.forEach(function(e) {
                     result.contentBlocks.push({ type: e.type, speaker: e.speaker || null, content: e.content });
